@@ -15,8 +15,7 @@ do
 	echo $filename
 	links -dump $url$filename | awk '/Up/'|grep "TR\|exe" | awk '{print $2,$8,$10,$11,$12"\n"}' > $rootdir/$filename
 
-	dirname=`wget -qO - http://lists.clean-mx.com/pipermail/viruswatch/$day/thread.html |\
-	awk '/\[Virus/'|tail -n 1|sed 's:": :g' |awk '{print $3}'|sed 's:.html::g'`
+	dirname=`echo $filename |sed 's:.html::g'`
 
 	rm -rf $rootdir/$dirname
 	mkdir $rootdir/$dirname
