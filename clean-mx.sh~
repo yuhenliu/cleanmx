@@ -1,0 +1,30 @@
+#!/bin/sh
+
+#rootdir="/home/zagorakis/work/malware/clean-mx"
+rootdir="/usr/share/malware"
+day=`date +%Y%m%d`
+
+url=`echo "wget -qO - http://lists.clean-mx.com/pipermail/viruswatch/$day/thread.html |\
+awk '/\[Virus/'|tail -n 1|sed 's:\": :g' |\
+awk '{print \"http://lists.clean-mx.com/pipermail/viruswatch/$day/\"$3}'"|sh`
+
+filename=`wget -qO - http://lists.clean-mx.com/pipermail/viruswatch/$day/thread.html |\
+awk '/\[Virus/'|tail -n 1|sed 's:": :g' |awk '{print $3}'`
+
+links -dump $url$filename | awk '/Up/'|grep "TR\|exe" | awk '{print $2,$8,$10,$11,$12"\n"}' > $rootdir/$filename
+
+dirname=`wget -qO - http://lists.clean-mx.com/pipermail/viruswatch/$day/thread.html |\
+awk '/\[Virus/'|tail -n 1|sed 's:": :g' |awk '{print $3}'|sed 's:.html::g'`
+
+rm -rf $rootdir/$dirname
+mkdir $rootdir/$dirname
+
+cd $rootdir
+
+grep "exe$" $filename |awk '{print "wget \""$5"\""}' | sh 
+ls *.exe | xargs md5 >> checksums
+mv *.exe $dirname
+
+rm -r $rootdir/*exe*
+mv checksums $rootdir/$dirname
+mv $filename $rootdir/$dirname
