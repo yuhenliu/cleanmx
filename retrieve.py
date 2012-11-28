@@ -7,8 +7,8 @@ import time
 import MySQLdb, _mysql
 import traceback
 import hashlib
-
-rootdir = "/home/zagorakis/work/malware/clean-mx-md5"
+import getopt
+import fnmatch
 
 class Malware:
 	def __init__(self):
@@ -49,6 +49,10 @@ class Malware:
 		print self.UDPcommunication
 
 def retrieve(source):
+	if os.path.isfile(source)==False:
+		print "No such file: ", source
+		return False
+		
 	print "Retrieving malware information from: ", source
 	text = urlopen(source).read()
 	soup = BeautifulSoup(text)
@@ -58,7 +62,11 @@ def retrieve(source):
 	if len(tables) == 0:
 		mwFileName = os.path.splitext(source)[0]
 		mwFileName = mwFileName+'.exe'
-		retrieveFromFile(mwFileName,mwInfo)
+		if os.path.isfile(mwFileName):
+			retrieveFromFile(mwFileName,mwInfo)
+		else:
+			print "No such file: ", mwFileName
+			return False
 	else:
 		# retrieve basic information
 		retrieveBasic(tables[0],mwInfo)
@@ -70,9 +78,9 @@ def retrieve(source):
 		if len(tables) >= 4:
 			retrieveBehave(tables[3],mwInfo)
 	
-	mwInfo.printAll()
+#	mwInfo.printAll()
 	
-	writeDB(mwInfo)
+	return writeDB(mwInfo)
 
 def retrieveFromFile(mwfile,mw):
 	fileContent = open(mwfile,"rb").read()
@@ -84,9 +92,6 @@ def retrieveFromFile(mwfile,mw):
 	mw.AnalysisDate = time.strftime("%Y-%m-%d %H:%M:%S",mt)
 
 def retrieveBasic(tab,mw):
-	if tab is None:
-		return
-	
 	trItem = tab.find('tr')
 	while trItem:
 		tdItem = trItem.find('td')
@@ -118,9 +123,6 @@ def retrieveBasic(tab,mw):
 		trItem = trItem.nextSibling.nextSibling
 
 def retrieveAddition(tab,mw):
-	if tab is None:
-		return
-	
 	trList = tab.findAll('tr')
 	if len(trList) >=1:
 		aliaslist=[]
@@ -131,9 +133,6 @@ def retrieveAddition(tab,mw):
 		mw.Alias = '\n'.join(aliaslist)
 
 def retrieveBehave(tab,mw):
-	if tab is None:
-		return
-	
 	bFind = False
 	trList = tab.findAll('tr')
 	for tr in trList:
@@ -179,30 +178,54 @@ def retrieveBehave(tab,mw):
 
 def writeDB(mw):
 	try:
-		db = MySQLdb.connect(host="localhost",user="zagorakis",passwd="Temp@Win2012",db="malware_db",charset="utf8");
+		print "Writing to database"
+		db = MySQLdb.connect(host="localhost",user="zagorakis",passwd="Temp@Win2012",db="malware_db",charset="utf8")
 		cur = db.cursor()
 		sql = "insert into malware values ('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s')"%(mw.SHA256,mw.SHA1,mw.MD5,mw.FileName,mw.FileSize,mw.FileType,mw.DetectionRatio,mw.DetectedAV,mw.AllAV,mw.AnalysisDate,mw.Alias,mw.HTTPrequest,mw.DNSrequest,mw.TCPconnection,mw.UDPcommunication)
 		cur.execute(sql)
 		cur.close()
 		db.commit()
 		db.close()
-		print "Writing to database"
 	except Exception as e:
 		print e
-		return	
+		return False
 
+	return True
+
+def allFiles(root, patterns='*'):
+	patterns = patterns.split(';')
+	for path, subdirs, files in os.walk(root):
+#		files.extend(subdirs)
+		files.sort()
+		for name in files:
+			for pattern in patterns:
+				if fnmatch.fnmatch(name, pattern):
+					yield os.path.join(path,name)
+					break
 
 def main():
-	datedirlist = glob.glob(rootdir+"/*")
-	datedirlist.sort()
-	for datedir in datedirlist:
-		hourdirlist = glob.glob(datedir+"/*")
-		hourdirlist.sort()
-		for hourdir in hourdirlist:
-			filelist = glob.glob(hourdir+"/*.html")
-			filelist.sort()
-			for htmlfile in filelist:
-				retrieve(htmlfile)
+	try:
+		opts, args = getopt.getopt(sys.argv[1:], 'd:', 'directory=')
+	except getopt.GetoptError, err:
+		print str(err)
+		sys.exit(2)
+	
+	rootdir = "/home/zagorakis/work/malware/clean-mx-md5/"
+	for o, a in opts:
+		if o == '-d':
+			rootdir = a
+		else:
+			assert False, "unhanlded option"
+	
+	fileCount = 0
+	mwCount = 0
+	
+	for htmlfile in allFiles(rootdir,'*.html'):
+		fileCount = fileCount + 1
+		if retrieve(htmlfile):
+			mwCount = mwCount + 1
+		print htmlfile
+	print fileCount, " files were analyzed.", mwCount, " malware items  were written to database"
 
 #	retrieve('/home/zagorakis/work/malware/clean-mx-md5/20121111/036802/b593f8723765f3f139b9f9e8649aa970.html')
 #	retrieve('/home/zagorakis/work/malware/clean-mx-md5/20121110/036767/8c06eb7b26d8acdd0548277f9598a08c.html')
