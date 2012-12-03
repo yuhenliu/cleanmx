@@ -1,154 +1,186 @@
-#!/usr/bin/env python
-
-from elementtree.ElementTree import ElementTree
-
-import urllib
-import urllib2
-import os
-import errno
-import shutil
-import re
-import time
-import calendar
-import base64
+import sys,os,time,datetime
+import threading
+import urllib,urllib2
+from urllib import urlopen
+from BeautifulSoup import BeautifulSoup
+import getopt
+import math
+import Queue
 import hashlib
-#from cuckoo.core.db import CuckooDatabase
-#from cuckoo.logging.crash import crash
-#from cuckoo.logging.colors import *
-#from cuckoo.config.config import CuckooConfig
+from urlparse import urlsplit
+from termcolor import colored
+import re
 
-#db = CuckooDatabase()
+queue = Queue.Queue()
 
-MINUTE = 60
-HOUR = MINUTE * 60
-DAY = HOUR * 24
+rootdir = '/home/zagorakis/work/malware/clean-mx-md5/'
 
-DESTINATION = "/tmp/cuckoo/"
+mx_url1 = 'http://lists.clean-mx.com/pipermail/viruswatch/'
+mx_url2 = '/thread.html'
 
-delay = int(30 * MINUTE)
-basePath = "/home/mboman/Src/cuckoo/"
+vs_url1 = 'https://www.virustotal.com/file/'
+vs_url2 = '/analysis/'
 
-analyzeIE = False
-analyzeFF = False
-analyzeEXE = True
+class ThreadMW(threading.Thread):
+	def __init__(self, num, queue):
+		threading.Thread.__init__(self)
+		self.num = num
+		self.queue = queue
+		self.day = ''
+		self.url = ''
+		self.last_prec='0'
+		self.this_prec='0'
 
-def filename_from_url(url):
- return url.split('/')[-1].split('#')[0].split('?')[0]
+	def run(self):
+		while True:
+		#	if self.queue.qsize()>0:
+				self.day = self.queue.get()
 
-def download(url):
-	print(bold(cyan("INFO")) + ": Downloading URL %s" % url)
+				threadUrl = mx_url1 + self.day + mx_url2
+			
+				self.grabThread(threadUrl)
 
+				self.queue.task_done()
+		#	else:
+		#		break;
+
+	def grabThread(self, url):
+		print time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()), colored("Thread %d"%self.num, 'white'), ("is crawling thread at %s" %(url))
+
+		threadDir = rootdir + self.day
+		if not os.path.exists(threadDir):
+			os.mkdir(threadDir)
+
+		text = urlopen(url).read()
+		soup = BeautifulSoup(text)
+		
+		for li in soup.findAll('li'):
+			if li.text.find('[Viruswatch]')>=0:
+				for attr in li.find('a').attrs:	
+					name, value = attr
+					if name == 'href':
+						self.grabPage(value)
+						break
+
+	def grabPage(self, htmlfile):
+		url = mx_url1 + self.day + '/' + htmlfile
+		print time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()), colored("Thread %d"%self.num, 'white'), ("is crawling page at %s" %(url))
+		
+		i = htmlfile.find('.html')
+		pageName = htmlfile[0:i]
+		pageDir = rootdir + self.day + '/' + pageName
+		if not os.path.exists(pageDir):
+			os.mkdir(pageDir)
+
+		text = urlopen(url).read()
+		soup = BeautifulSoup(text)
+		
+		pre = soup.find('pre')
+		for mw in pre.findAll('a'):
+		#	if mw.text.find('.exe')>=0:
+			if re.search('.exe$', mw.text):
+				self.url = mw.text
+				mwbasename = 'malware.exe'#os.path.basename(urlsplit(mw.text)[2])
+				mwpath = pageDir
+				mwfilename = os.path.join(mwpath, mwbasename)
+				
+				# downloading malware file
+				print time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()), colored("Thread %d"%self.num, 'white'), ("starts downloading %s" %(mw.text))
+				try:
+					self.last_prec = '0'
+					self.last_prec = '0'
+					urllib.urlretrieve(mw.text, mwfilename, self.urlcallback)
+				except Exception as e:
+					print e
+
+				#os.popen("wget -c -nc -t 5 -T 30 -O %s %s" %(mwfilename, mw.text))
+				print time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()), colored("Thread %d"%self.num, 'white'), ("ends downloading %s" %(mw.text))
+				
+				# rename malware file with md5 hash value
+				if os.path.exists(mwfilename)==False:
+					print "No such file %s" %mwfilename
+				else:
+					fileContent = open(mwfilename,"rb").read()
+					mwhashmd5 = hashlib.md5(fileContent).hexdigest()
+					new_mwbasename = mwhashmd5 + '.exe'
+					os.rename(mwfilename, os.path.join(mwpath, new_mwbasename))
+				
+					# downloading malware information from virustotal.com
+					mwhash256 = hashlib.sha256(fileContent).hexdigest()
+					vsbasename = mwhashmd5 + '.html'
+					vspath = mwpath
+					vsfilename = os.path.join(vspath, vsbasename)
+					vs_url = vs_url1 + mwhash256 + vs_url2
+
+					print time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()), colored("Thread %d"%self.num, 'white'), ("starts downloading %s" %(vs_url))
+					try:
+						urllib.urlretrieve(vs_url, vsfilename)			
+					except Exception as e:
+						print e
+
+					#os.popen("wget -c -nc -t 5 -T 30 -O %s %s" %(vsfilename, vs_url))
+					print time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()), colored("Thread %d"%self.num, 'white'), ("ends downloading %s" %(vs_url))
+
+	def urlcallback(self,block_num,block_size,file_size):
+		prec = 100*block_num*block_size/file_size
+		if 100 < prec:
+			prec=100
+		this_prec = str(prec)[0:5]
+		if self.last_prec!=this_prec:
+			print time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()), colored("Thread %d"%self.num, 'white'), colored(this_prec+"%", 'white'), ("%s"%self.url)
+		self.last_prec = this_prec
+		#print "%.2f%%"%(prec)
+
+def getDays(str_from, str_to):
 	try:
-		url_handle = urllib2.urlopen(url)
-		binary_data = url_handle.read()
-	except Exception, why:
-		print(bold(red("ERROR")) + ": Unable to download file: %s" % why)
-	return False
+		date_from = datetime.datetime.strptime(str_from,'%Y%m%d')
+		date_to = datetime.datetime.strptime(str_to,'%Y%m%d')
+	except Exception as e:
+		print e
+		sys.exit(2)
 
-	filename = filename_from_url(url)
+	date_range = date_to - date_from
+	
+	days = []
+	
+	if date_range.days >= 0:
+		days_item = date_from
+	else:
+		days_item = date_to
 
-	try:
-		dest = os.path.join(DESTINATION, filename)
-		f = open(dest, "wb")
-		f.write(binary_data)
-		f.close()
-	except Exception, why:
-		print(bold(red("ERROR")) + ": Unable to store file: %s" % why)
-  return False
+	for i in range(abs(date_range.days)+1):
+		days.append(days_item.strftime('%Y%m%d'))
+		days_item += datetime.timedelta(days=1)
 
- return dest
-
-def url(url):
- file_path = os.path.join(DESTINATION, "%s.url" % hashlib.md5(url).hexdigest())
- file_handle = open(file_path, "w")
- file_handle.write("[InternetShortcut]\n")
- file_handle.write("URL=%s\n" % url)
- file_handle.close()
- return file_path
+	return days
 
 def main():
- try:
-  lastMod = int(os.path.getmtime(basePath + "xmlviruses.xml"))
- except Exception as e:
-  print("Error: %s" % e)
-  lastMod = 0
+	try:
+		opts, args = getopt.getopt(sys.argv[1:], 'f:t:')
+	except getopt.GetoptError, err:
+		print str(err)
+		sys.exit(2)
+	
+	date_from = date_to = ''
+	for o, a in opts:
+		if o == '-f':
+			date_from = a
+		elif o == '-t':
+			date_to = a
+		else:
+			assert False, "unhanlded option"
+	
+	days = getDays(date_from, date_to)
+	
+	for i in range(len(days)):
+		t_mw = ThreadMW(i, queue)
+		t_mw.setDaemon(True)
+		t_mw.start()
 
- curTime = int(calendar.timegm(time.gmtime()))
+	for oneday in days:
+		queue.put(oneday)
 
- if (lastMod + delay) < curTime:
-  age = int((curTime - lastMod))
+	queue.join()
 
-  age_d = age / DAY
-  age   = age - (age_d * DAY)
-
-  age_h = age / HOUR
-  age   = age - (age_h * HOUR)
-
-  age_m = age / MINUTE
-  age   = age - (age_m * MINUTE)
-
-  print("It has been " + str(age_d) + " days, " + str(age_h) + " hours, " + str(age_m) + " minutes and " + str(age) + " seconds since last update")
-
-  urllib.urlretrieve("http://support.clean-mx.de/clean-mx/xmlviruses.php?response=alive&url=%.exe", basePath + "xmlviruses.xml")
- else:
-  print("Not updating virus list as it is less then 30 minutes old")
-
- tree = ElementTree(file=basePath + "xmlviruses.xml")
- entryList = tree.findall("entries/entry")
-
- for entry in entryList:
-  #print url.text
-  urlString = entry[9].text
-  if urlString:
-   
-   #md5String = entry[4].text
-
-   #print "urlString: " + urlString
-   #print "md5String: " + md5String
-
-   #re.IGNORECASE
-   #result = re.match("^.*\.[Ee][Xx][Ee]$", urlString)
-   #result = re.match(".*", urlString)
-
-   if analyzeIE:
-
-    try: 
-     #db = CuckooDatabase()
-     # Surf to the URL and analyze it
-     #task_id = db.add_task(url(urlString))
-	 taks_id = url(urlString)
-     print("Added task " + str(task_id) + " (" + urlString + ") for Internet Explorer Analysis")
-
-     if not task_id:
-      print(bold(red("ERROR")) + ": Unable to add task to database.")
-      return False
-     else:
-      print(bold(cyan("DONE")) + ": Task successfully added with ID %d." % task_id)
-    except Exception, why:
-     print(bold(red("ERROR")) + ": Unable to add new URL task: %s" % why)
-
-
-   if analyzeEXE:
-    try:
-     #db = CuckooDatabase()
-     # Download the binary and analyze it
-     #task_id = db.add_task(download(urlString))
-     task_id = download(urlString)
- 	 print("Added task " + str(task_id) + " (" + urlString + ") for Windows Analysis")
- 
-     if not task_id:
-      print(bold(red("ERROR")) + ": Unable to add task to database.")
-      return False
-     else:
-      print(bold(cyan("DONE")) + ": Task successfully added with ID %d." % task_id)
-    except Exception, why:
-     print(bold(red("ERROR")) + ": Unable to add new Download/Analysis task: %s" % why)
-
-
-
- print ("Queued all available samples for analysis")
-
-if __name__ == "__main__":
-    main()
-
-
+if __name__=='__main__':
+	main()
